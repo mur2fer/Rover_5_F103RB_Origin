@@ -1,40 +1,40 @@
 /**
- ******************************************************************************
- * @file           : main.c
- * @brief          : Main program body
- ******************************************************************************
- ** This notice applies to any and all portions of this file
- * that are not between comment pairs USER CODE BEGIN and
- * USER CODE END. Other portions of this file, whether
- * inserted by the user or by software development tools
- * are owned by their respective copyright owners.
- *
- * COPYRIGHT(c) 2020 STMicroelectronics
- *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
- *   1. Redistributions of source code must retain the above copyright notice,
- *      this list of conditions and the following disclaimer.
- *   2. Redistributions in binary form must reproduce the above copyright notice,
- *      this list of conditions and the following disclaimer in the documentation
- *      and/or other materials provided with the distribution.
- *   3. Neither the name of STMicroelectronics nor the names of its contributors
- *      may be used to endorse or promote products derived from this software
- *      without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- ******************************************************************************
- */
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  ** This notice applies to any and all portions of this file
+  * that are not between comment pairs USER CODE BEGIN and
+  * USER CODE END. Other portions of this file, whether 
+  * inserted by the user or by software development tools
+  * are owned by their respective copyright owners.
+  *
+  * COPYRIGHT(c) 2020 STMicroelectronics
+  *
+  * Redistribution and use in source and binary forms, with or without modification,
+  * are permitted provided that the following conditions are met:
+  *   1. Redistributions of source code must retain the above copyright notice,
+  *      this list of conditions and the following disclaimer.
+  *   2. Redistributions in binary form must reproduce the above copyright notice,
+  *      this list of conditions and the following disclaimer in the documentation
+  *      and/or other materials provided with the distribution.
+  *   3. Neither the name of STMicroelectronics nor the names of its contributors
+  *      may be used to endorse or promote products derived from this software
+  *      without specific prior written permission.
+  *
+  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+  * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+  * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  *
+  ******************************************************************************
+  */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f1xx_hal.h"
@@ -47,6 +47,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -56,10 +57,10 @@
 #define AVANCE 	GPIO_PIN_SET
 #define RECULE  GPIO_PIN_RESET
 #define POURCENT 640
-#define Seuil_Dist_4 1600 // corespond à 10 cm.
-#define Seuil_Dist_3 1600
-#define Seuil_Dist_1 1600
-#define Seuil_Dist_2 1600
+#define Seuil_Dist_4 1000 // corespond à 10 cm.
+#define Seuil_Dist_3 1000
+#define Seuil_Dist_1 1000
+#define Seuil_Dist_2 1000
 #define V1 38
 #define V2 56
 #define V3 76
@@ -76,6 +77,7 @@
 #define DELTA 0x50
 #define DECALAGE 30
 #define TOLERANCE 3
+const char MON_ADRESSE[] = { 77 };
 
 struct Position {
 	int x, y, z;
@@ -112,17 +114,20 @@ enum GST_CMDE_ETAT {
 	MOV_PARK_STATE,
 	ATTENTE_PARK_STATE
 };
+volatile enum GST_CMDE_ETAT gstCmdeEtat = VEILLE;
 enum DIRECTION {
 	POS_X, POS_Y, POS_Z
 };
-enum DIRECTION direction;
+volatile enum DIRECTION direction;
 volatile unsigned char New_CMDE = 0;
+volatile char address_i;
 volatile uint16_t Dist_ACS_1, Dist_ACS_2, Dist_ACS_3, Dist_ACS_4;
 volatile unsigned int Time = 0;
 volatile unsigned int Tech = 0;
 uint16_t adc_buffer[10];
 uint16_t Buff_Dist[8];
 uint8_t BLUE_RX;
+uint8_t XBEE_RX[20];
 
 uint16_t _DirG, _DirD, CVitG, CVitD, DirD, DirG;
 uint16_t _CVitD = 0;
@@ -154,8 +159,9 @@ void controle(void);
 void Calcul_Vit(void);
 void ACS(void);
 void Direction_Sonar(enum DIRECTION direction);
-void movPark(enum GST_CMDE_ETAT* Etat);
-void Park(enum GST_CMDE_ETAT* Etat);
+void movPark(void);
+void Park(void);
+void printToXBEE(char out[]);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
@@ -163,44 +169,46 @@ void Park(enum GST_CMDE_ETAT* Etat);
 /* USER CODE END 0 */
 
 /**
- * @brief  The application entry point.
- *
- * @retval None
- */
-int main(void) {
-	/* USER CODE BEGIN 1 */
+  * @brief  The application entry point.
+  *
+  * @retval None
+  */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
 
-	/* USER CODE END 1 */
+  /* USER CODE END 1 */
 
-	/* MCU Configuration----------------------------------------------------------*/
+  /* MCU Configuration----------------------------------------------------------*/
 
-	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-	HAL_Init();
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
 
-	/* USER CODE BEGIN Init */
+  /* USER CODE BEGIN Init */
 	Dist_Obst = 0;
-	/* USER CODE END Init */
+  /* USER CODE END Init */
 
-	/* Configure the system clock */
-	SystemClock_Config();
+  /* Configure the system clock */
+  SystemClock_Config();
 
-	/* USER CODE BEGIN SysInit */
+  /* USER CODE BEGIN SysInit */
 
-	/* USER CODE END SysInit */
+  /* USER CODE END SysInit */
 
-	/* Initialize all configured peripherals */
-	MX_GPIO_Init();
-	MX_DMA_Init();
-	MX_ADC1_Init();
-	MX_TIM2_Init();
-	MX_TIM3_Init();
-	MX_TIM4_Init();
-	MX_USART3_UART_Init();
-	MX_TIM1_Init();
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_ADC1_Init();
+  MX_TIM2_Init();
+  MX_TIM3_Init();
+  MX_TIM4_Init();
+  MX_USART3_UART_Init();
+  MX_TIM1_Init();
+  MX_USART1_UART_Init();
 
-	/* Initialize interrupts */
-	MX_NVIC_Init();
-	/* USER CODE BEGIN 2 */
+  /* Initialize interrupts */
+  MX_NVIC_Init();
+  /* USER CODE BEGIN 2 */
 	HAL_SuspendTick(); // suppresion des Tick interrupt pour le mode sleep.
 
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);  // Start PWM motor
@@ -212,93 +220,102 @@ int main(void) {
 	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
 	HAL_UART_Receive_IT(&huart3, &BLUE_RX, 1);
+	HAL_UART_Receive_IT(&huart1, XBEE_RX, 20);
 	HAL_ADC_Start_IT(&hadc1);
 	HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_2);
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
 	Direction_Sonar(POS_X);
-	/* USER CODE END 2 */
+  /* USER CODE END 2 */
 
-	/* Infinite loop */
-	/* USER CODE BEGIN WHILE */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
 	while (1) {
 		Gestion_Commandes();
 		controle();
-		/* USER CODE END WHILE */
+  /* USER CODE END WHILE */
 
-		/* USER CODE BEGIN 3 */
+  /* USER CODE BEGIN 3 */
 
 	}
-	/* USER CODE END 3 */
+  /* USER CODE END 3 */
 
 }
 
 /**
- * @brief System Clock Configuration
- * @retval None
- */
-void SystemClock_Config(void) {
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
 
-	RCC_OscInitTypeDef RCC_OscInitStruct;
-	RCC_ClkInitTypeDef RCC_ClkInitStruct;
-	RCC_PeriphCLKInitTypeDef PeriphClkInit;
+  RCC_OscInitTypeDef RCC_OscInitStruct;
+  RCC_ClkInitTypeDef RCC_ClkInitStruct;
+  RCC_PeriphCLKInitTypeDef PeriphClkInit;
 
-	/**Initializes the CPU, AHB and APB busses clocks
-	 */
-	RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-	RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-	RCC_OscInitStruct.HSICalibrationValue = 16;
-	RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-	RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
-	RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
-	if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
-		_Error_Handler(__FILE__, __LINE__);
-	}
+    /**Initializes the CPU, AHB and APB busses clocks 
+    */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = 16;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
 
-	/**Initializes the CPU, AHB and APB busses clocks
-	 */
-	RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-			| RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-	RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-	RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-	RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
-	RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+    /**Initializes the CPU, AHB and APB busses clocks 
+    */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-	if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK) {
-		_Error_Handler(__FILE__, __LINE__);
-	}
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
 
-	PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
-	PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV8;
-	if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
-		_Error_Handler(__FILE__, __LINE__);
-	}
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV8;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
 
-	/**Configure the Systick interrupt time
-	 */
-	HAL_SYSTICK_Config(HAL_RCC_GetHCLKFreq() / 1000);
+    /**Configure the Systick interrupt time 
+    */
+  HAL_SYSTICK_Config(HAL_RCC_GetHCLKFreq()/1000);
 
-	/**Configure the Systick
-	 */
-	HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
+    /**Configure the Systick 
+    */
+  HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
 
-	/* SysTick_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
+  /* SysTick_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
 }
 
 /**
- * @brief NVIC Configuration.
- * @retval None
- */
-static void MX_NVIC_Init(void) {
-	/* EXTI15_10_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
-	HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
-	/* USART3_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(USART3_IRQn, 0, 0);
-	HAL_NVIC_EnableIRQ(USART3_IRQn);
-	/* ADC1_2_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(ADC1_2_IRQn, 0, 0);
-	HAL_NVIC_EnableIRQ(ADC1_2_IRQn);
+  * @brief NVIC Configuration.
+  * @retval None
+  */
+static void MX_NVIC_Init(void)
+{
+  /* EXTI15_10_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+  /* USART3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(USART3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(USART3_IRQn);
+  /* USART1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(USART1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
+  /* ADC1_2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(ADC1_2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(ADC1_2_IRQn);
 }
 
 /* USER CODE BEGIN 4 */
@@ -317,30 +334,28 @@ void Direction_Sonar(enum DIRECTION direction) {
 }
 
 void Gestion_Commandes(void) {
-	static enum GST_CMDE_ETAT Etat = VEILLE;
-
 	if (New_CMDE) {
 		New_CMDE = 0;
 		switch (CMDE) {
 		case STOP: {
 			_CVitD = _CVitG = 0;
 			// Mise en sommeil: STOP mode , réveil via IT BP1
-			Etat = VEILLE;
+			gstCmdeEtat = VEILLE;
 			Mode = SLEEP;
 
 			break;
 		}
 		case START: {
 			// réveil sytème grace à l'IT BP1
-			Etat = ARRET;
+			gstCmdeEtat = ARRET;
 			Mode = SLEEP;
 
 			break;
 		}
 		case AVANT: {
-			switch (Etat) {
+			switch (gstCmdeEtat) {
 			case VEILLE: {
-				Etat = VEILLE;
+				gstCmdeEtat = VEILLE;
 				Mode = SLEEP;
 				break;
 			}
@@ -349,7 +364,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = AV1;
+				gstCmdeEtat = AV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -358,7 +373,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = AV2;
+				gstCmdeEtat = AV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -367,7 +382,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = AV3;
+				gstCmdeEtat = AV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -376,7 +391,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = AV3;
+				gstCmdeEtat = AV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -385,7 +400,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = 0;
 				_CVitD = 0;
-				Etat = ARRET;
+				gstCmdeEtat = ARRET;
 				Mode = SLEEP;
 
 				break;
@@ -395,7 +410,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = RV1;
+				gstCmdeEtat = RV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -404,7 +419,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = RV2;
+				gstCmdeEtat = RV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -413,7 +428,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = AV1;
+				gstCmdeEtat = AV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -422,7 +437,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = AV2;
+				gstCmdeEtat = AV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -431,7 +446,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = AV3;
+				gstCmdeEtat = AV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -440,7 +455,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = AV2;
+				gstCmdeEtat = AV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -449,7 +464,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = AV2;
+				gstCmdeEtat = AV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -458,7 +473,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = AV3;
+				gstCmdeEtat = AV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -468,9 +483,9 @@ void Gestion_Commandes(void) {
 			break;
 		}
 		case ARRIERE: {
-			switch (Etat) {
+			switch (gstCmdeEtat) {
 			case VEILLE: {
-				Etat = VEILLE;
+				gstCmdeEtat = VEILLE;
 				Mode = SLEEP;
 				break;
 			}
@@ -479,7 +494,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = RV1;
+				gstCmdeEtat = RV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -488,7 +503,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = 0;
 				_CVitD = 0;
-				Etat = ARRET;
+				gstCmdeEtat = ARRET;
 				Mode = SLEEP;
 
 				break;
@@ -498,7 +513,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = AV1;
+				gstCmdeEtat = AV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -507,7 +522,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = AV2;
+				gstCmdeEtat = AV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -516,7 +531,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = RV2;
+				gstCmdeEtat = RV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -525,7 +540,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = RV3;
+				gstCmdeEtat = RV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -534,7 +549,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = RV3;
+				gstCmdeEtat = RV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -543,7 +558,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = RV1;
+				gstCmdeEtat = RV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -552,7 +567,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = RV2;
+				gstCmdeEtat = RV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -561,7 +576,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = RV3;
+				gstCmdeEtat = RV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -570,7 +585,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = RV1;
+				gstCmdeEtat = RV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -579,7 +594,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = RV2;
+				gstCmdeEtat = RV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -588,7 +603,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = RV3;
+				gstCmdeEtat = RV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -598,9 +613,9 @@ void Gestion_Commandes(void) {
 			break;
 		}
 		case DROITE: {
-			switch (Etat) {
+			switch (gstCmdeEtat) {
 			case VEILLE: {
-				Etat = VEILLE;
+				gstCmdeEtat = VEILLE;
 				Mode = SLEEP;
 				break;
 			}
@@ -609,7 +624,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = DV1;
+				gstCmdeEtat = DV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -618,7 +633,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = DV1;
+				gstCmdeEtat = DV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -627,7 +642,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = DV2;
+				gstCmdeEtat = DV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -636,7 +651,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = DV3;
+				gstCmdeEtat = DV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -645,7 +660,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = DV1;
+				gstCmdeEtat = DV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -654,7 +669,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = DV2;
+				gstCmdeEtat = DV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -663,7 +678,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = DV3;
+				gstCmdeEtat = DV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -672,7 +687,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = DV2;
+				gstCmdeEtat = DV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -681,7 +696,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = DV3;
+				gstCmdeEtat = DV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -690,7 +705,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = DV3;
+				gstCmdeEtat = DV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -699,7 +714,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = 0;
 				_CVitD = 0;
-				Etat = ARRET;
+				gstCmdeEtat = ARRET;
 				Mode = SLEEP;
 
 				break;
@@ -709,7 +724,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = GV1;
+				gstCmdeEtat = GV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -718,7 +733,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = GV2;
+				gstCmdeEtat = GV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -728,9 +743,9 @@ void Gestion_Commandes(void) {
 			break;
 		}
 		case GAUCHE: {
-			switch (Etat) {
+			switch (gstCmdeEtat) {
 			case VEILLE: {
-				Etat = VEILLE;
+				gstCmdeEtat = VEILLE;
 				Mode = SLEEP;
 				break;
 			}
@@ -739,7 +754,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = GV1;
+				gstCmdeEtat = GV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -748,7 +763,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = GV1;
+				gstCmdeEtat = GV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -757,7 +772,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = GV2;
+				gstCmdeEtat = GV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -766,7 +781,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = GV3;
+				gstCmdeEtat = GV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -775,7 +790,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = GV1;
+				gstCmdeEtat = GV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -784,7 +799,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = GV2;
+				gstCmdeEtat = GV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -793,7 +808,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = GV3;
+				gstCmdeEtat = GV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -802,7 +817,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = 0;
 				_CVitD = 0;
-				Etat = ARRET;
+				gstCmdeEtat = ARRET;
 				Mode = SLEEP;
 
 				break;
@@ -812,7 +827,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = DV1;
+				gstCmdeEtat = DV1;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -821,7 +836,7 @@ void Gestion_Commandes(void) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = DV2;
+				gstCmdeEtat = DV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -830,7 +845,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = GV2;
+				gstCmdeEtat = GV2;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -839,7 +854,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = GV3;
+				gstCmdeEtat = GV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -848,7 +863,7 @@ void Gestion_Commandes(void) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = GV3;
+				gstCmdeEtat = GV3;
 				Mode = ACTIF_MODE;
 				break;
 			}
@@ -859,21 +874,23 @@ void Gestion_Commandes(void) {
 
 		}
 		case PARK: {
-			if (Etat != VEILLE) {
-				Etat = PARK_STATE;
+			if (gstCmdeEtat != VEILLE) {
+				gstCmdeEtat = PARK_STATE;
 				Mode = SLEEP;
 			}
 			break;
 		}
 		case MOV_PARK: {
-			if (Etat != VEILLE) {
-				Etat = MOV_PARK_STATE;
+			if (gstCmdeEtat != VEILLE) {
+				gstCmdeEtat = MOV_PARK_STATE;
 			}
 			break;
 		}
 		case ATTENTE_PARK: {
-			if (Etat != VEILLE) {
-				Etat = ARRET; // TODO Change state
+			if (gstCmdeEtat != VEILLE) {
+				gstCmdeEtat =
+						(gstCmdeEtat != ATTENTE_PARK_STATE) ?
+								ATTENTE_PARK_STATE : ARRET;
 				Mode = SLEEP;
 			}
 			break;
@@ -881,22 +898,22 @@ void Gestion_Commandes(void) {
 		}
 	}
 
-	if (Etat == MOV_PARK_STATE) {
+	if (gstCmdeEtat == MOV_PARK_STATE) {
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
-		movPark(&Etat);
+		movPark();
 	}
 
-	if (Etat == PARK_STATE) {
-		Park(&Etat);
+	if (gstCmdeEtat == PARK_STATE) {
+		Park();
 	}
 }
 
-void movPark(enum GST_CMDE_ETAT* Etat) {
+void movPark(void) {
 	static enum MOV_PARK_ETAT movParkEtat = AVANCER_50cm;
 	static unsigned int cpt = 0;
 	switch (movParkEtat) {
 	case AVANCER_50cm: {
-		if (cpt++ == 20) {
+		if (cpt++ >= 40000) {
 			movParkEtat = TOURNER_CCW;
 			cpt = 0;
 		} else {
@@ -909,7 +926,7 @@ void movPark(enum GST_CMDE_ETAT* Etat) {
 		break;
 	}
 	case TOURNER_CCW: {
-		if (cpt++ == 20) {
+		if (cpt++ >= 40000) {
 			movParkEtat = MOV_Z;
 			cpt = 0;
 		} else {
@@ -922,15 +939,15 @@ void movPark(enum GST_CMDE_ETAT* Etat) {
 		break;
 	}
 	case MOV_Z: {
-		if (((long)Dist_mur - position_ref_i.z - DECALAGE) < -TOLERANCE
-				|| ((long)Dist_mur - position_ref_i.z - DECALAGE) > TOLERANCE) {
-			if ((long)Dist_mur < (position_ref_i.z + DECALAGE)) {
+		if (((long) Dist_mur - position_ref_i.z - DECALAGE) < -TOLERANCE
+				|| ((long) Dist_mur - position_ref_i.z - DECALAGE) > TOLERANCE) {
+			if ((long) Dist_mur < (position_ref_i.z + DECALAGE)) {
 				_CVitD = V1;
 				_CVitG = V1;
 				_DirD = RECULE;
 				_DirG = RECULE;
 				Mode = ACTIF_MODE;
-			} else if ((long)Dist_mur > (position_ref_i.z + DECALAGE)) {
+			} else if ((long) Dist_mur > (position_ref_i.z + DECALAGE)) {
 				_CVitD = V1;
 				_CVitG = V1;
 				_DirD = AVANCE;
@@ -943,7 +960,7 @@ void movPark(enum GST_CMDE_ETAT* Etat) {
 		break;
 	}
 	case TOURNER_CW: {
-		if (cpt++ == 20) {
+		if (cpt++ == 40000) {
 			movParkEtat = ALIGNER;
 			cpt = 0;
 		} else {
@@ -956,7 +973,7 @@ void movPark(enum GST_CMDE_ETAT* Etat) {
 		break;
 	}
 	case ALIGNER: {
-		if ((long)Dist_mur > position_ref_i.x) {
+		if ((long) Dist_mur > position_ref_i.x) {
 			_CVitD = V1;
 			_CVitG = V1;
 			_DirD = AVANCE;
@@ -967,7 +984,7 @@ void movPark(enum GST_CMDE_ETAT* Etat) {
 			_CVitG = 0;
 			Mode = SLEEP;
 			movParkEtat = AVANCER_50cm;
-			*Etat = PARK_STATE;
+			gstCmdeEtat = PARK_STATE;
 			cpt = 0;
 		}
 		break;
@@ -975,25 +992,49 @@ void movPark(enum GST_CMDE_ETAT* Etat) {
 	}
 }
 
-void Park(enum GST_CMDE_ETAT* Etat){
-	//TODO demande d'adresse
-	static unsigned int cpt = 0;
+void Park(void) {
+	static int cpt = 0;
+	static int offset = 0;
+	static char buffer[20];
+	char tempBuffer[1];
+	if (cpt == 0) {
+		address_i = 0;
+		offset = 0;
+		printToXBEE(":@");  // First time : Ask for addresses.
+	}
 	cpt++;
-	if (cpt < 200000) {
-		Direction_Sonar(POS_X);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
-		position_ref_o.x = Dist_mur;
-	} else if (cpt >= 200000 && cpt < 400000) {
-		Direction_Sonar(POS_Y);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
-		position_ref_o.y = Dist_mur;
-	} else if (cpt >= 400000 && cpt < 600000) {
-		Direction_Sonar(POS_Z);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
-		position_ref_o.z = Dist_mur;
-	} else {
+	if (address_i) {
+		if (offset == 0) {
+			offset = cpt;
+			cpt = 1;
+		}
+		if (cpt < 200000) {
+			Direction_Sonar(POS_X);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+			position_ref_o.x = Dist_mur;
+		} else if (cpt >= 200000 && cpt < 400000) {
+			Direction_Sonar(POS_Y);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+			position_ref_o.y = Dist_mur;
+		} else if (cpt >= 400000 && cpt < 600000) {
+			Direction_Sonar(POS_Z);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+			position_ref_o.z = Dist_mur;
+		} else {
+			sprintf(buffer, "%%x%05iy%05iz%05i", position_ref_o.x,
+					position_ref_o.y, position_ref_o.z);
+			printToXBEE(buffer);
+
+			sprintf(tempBuffer, "#%i", address_i);
+
+			printToXBEE(tempBuffer);
+			printToXBEE(":M");
+			cpt = 0;
+			gstCmdeEtat = ARRET;
+		}
+	} else if (cpt > 2000000) {
+		gstCmdeEtat = ARRET;
 		cpt = 0;
-		*Etat = ARRET;
 	}
 }
 
@@ -1207,30 +1248,32 @@ void regulateur(void) {
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	static char bufferAddressToSend[3];
+
 	if (huart->Instance == USART3) {
 
 		switch (BLUE_RX) {
 		case 'F': {
 			CMDE = AVANT;
-			//New_CMDE = 1;
+			New_CMDE = 1;
 			break;
 		}
 
 		case 'B': {
 			CMDE = ARRIERE;
-			//New_CMDE = 1;
+			New_CMDE = 1;
 			break;
 		}
 
 		case 'L': {
 			CMDE = GAUCHE;
-			//New_CMDE = 1;
+			New_CMDE = 1;
 			break;
 		}
 
 		case 'R': {
 			CMDE = DROITE;
-			//New_CMDE = 1;
+			New_CMDE = 1;
 			break;
 		}
 
@@ -1245,17 +1288,59 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			New_CMDE = 1;
 			break;
 		}
+		case 'u': {
+			CMDE = ATTENTE_PARK;
+			New_CMDE = 1;
+			break;
+		}
 
 		case 'D': {
 			// disconnect bluetooth
 			break;
 		}
 		default:
-			New_CMDE = 1;
+			break;
 		}
 
 		HAL_UART_Receive_IT(&huart3, &BLUE_RX, 1);//arme la réception du caractère suivant
 
+	} else if (huart->Instance == USART1) {
+		switch (XBEE_RX[0]) {
+		case '#':   // #[char]
+			address_i = XBEE_RX[1];
+			break;
+
+		case ':':  // :[command], do not forgot to get address
+			switch (XBEE_RX[1]) {
+			case '@':
+				if (gstCmdeEtat == ATTENTE_PARK_STATE) {
+					sprintf(bufferAddressToSend, "#%s", MON_ADRESSE);
+					printToXBEE(bufferAddressToSend);
+				}
+				break;
+
+			case 'M':
+				if (address_i == MON_ADRESSE[0]) {
+					CMDE = MOV_PARK;
+					New_CMDE = 1;
+				}
+				break;
+
+			default:
+				break;
+			}
+			break;  // case ':'
+
+		case '%':   // %x12345y12345z12345
+			sscanf((char *) XBEE_RX, "%%x%05iy%05iz%05i", &position_ref_i.x,
+					&position_ref_i.y, &position_ref_i.z);
+			break;
+
+		default:
+			break;
+		}
+
+		HAL_UART_Receive_IT(&huart1, XBEE_RX, 20); //arme la réception du caractère suivant
 	}
 }
 
@@ -1331,45 +1416,50 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim) {
 	}
 }
 
+void printToXBEE(char out[]) {
+	HAL_UART_Transmit(&huart1, (uint8_t *) out, strlen(out), 10);
+}
+
 /* USER CODE END 4 */
 
 /**
- * @brief  This function is executed in case of error occurrence.
- * @param  file: The file name as string.
- * @param  line: The line in file as a number.
- * @retval None
- */
-void _Error_Handler(char *file, int line) {
-	/* USER CODE BEGIN Error_Handler_Debug */
+  * @brief  This function is executed in case of error occurrence.
+  * @param  file: The file name as string.
+  * @param  line: The line in file as a number.
+  * @retval None
+  */
+void _Error_Handler(char *file, int line)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
 	/* User can add his own implementation to report the HAL error return state */
 	while (1) {
 	}
-	/* USER CODE END Error_Handler_Debug */
+  /* USER CODE END Error_Handler_Debug */
 }
 
 #ifdef  USE_FULL_ASSERT
 /**
- * @brief  Reports the name of the source file and the source line number
- *         where the assert_param error has occurred.
- * @param  file: pointer to the source file name
- * @param  line: assert_param error line source number
- * @retval None
- */
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t* file, uint32_t line)
-{
-	/* USER CODE BEGIN 6 */
+{ 
+  /* USER CODE BEGIN 6 */
 	/* User can add his own implementation to report the file name and line number,
 	 tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-	/* USER CODE END 6 */
+  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
 
 /**
- * @}
- */
+  * @}
+  */
 
 /**
- * @}
- */
+  * @}
+  */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

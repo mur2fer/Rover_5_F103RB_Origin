@@ -47,6 +47,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -56,10 +57,10 @@
 #define AVANCE 	GPIO_PIN_SET
 #define RECULE  GPIO_PIN_RESET
 #define POURCENT 640
-#define Seuil_Dist_4 1600 // corespond à 10 cm.
-#define Seuil_Dist_3 1600
-#define Seuil_Dist_1 1600
-#define Seuil_Dist_2 1600
+#define Seuil_Dist_4 1000 // corespond à 10 cm.
+#define Seuil_Dist_3 1000
+#define Seuil_Dist_1 1000
+#define Seuil_Dist_2 1000
 #define V1 38
 #define V2 56
 #define V3 76
@@ -74,27 +75,59 @@
 #define CKd_D 0
 #define CKd_G 0
 #define DELTA 0x50
+#define DECALAGE 30
+#define TOLERANCE 3
+const char MON_ADRESSE[] = { 77 };
 
+struct Position {
+	int x, y, z;
+};
+volatile struct Position position_ref_o = { .x = -1, .y = -1, .z = -1 };
+volatile struct Position position_ref_i = { .x = -1, .y = -1, .z = -1 };
 enum CMDE {
-	START,
-	STOP,
-	AVANT,
-	ARRIERE,
-	DROITE,
-	GAUCHE
+	START, STOP, AVANT, ARRIERE, DROITE, GAUCHE, PARK, MOV_PARK, ATTENTE_PARK
 };
 volatile enum CMDE CMDE;
 enum MODE {
-	SLEEP, ACTIF
+	SLEEP, ACTIF_MODE
 };
 volatile enum MODE Mode;
+enum MOV_PARK_ETAT {
+	AVANCER_50cm, TOURNER_CCW, MOV_Z, TOURNER_CW, ALIGNER
+};
+enum GST_CMDE_ETAT {
+	VEILLE,
+	ARRET,
+	AV1,
+	AV2,
+	AV3,
+	RV1,
+	RV2,
+	RV3,
+	DV1,
+	DV2,
+	DV3,
+	GV1,
+	GV2,
+	GV3,
+	PARK_STATE,
+	MOV_PARK_STATE,
+	ATTENTE_PARK_STATE
+};
+volatile enum GST_CMDE_ETAT gstCmdeEtat = VEILLE;
+enum DIRECTION {
+	POS_X, POS_Y, POS_Z
+};
+volatile enum DIRECTION direction;
 volatile unsigned char New_CMDE = 0;
+volatile char address_i;
 volatile uint16_t Dist_ACS_1, Dist_ACS_2, Dist_ACS_3, Dist_ACS_4;
 volatile unsigned int Time = 0;
 volatile unsigned int Tech = 0;
 uint16_t adc_buffer[10];
 uint16_t Buff_Dist[8];
 uint8_t BLUE_RX;
+uint8_t XBEE_RX[20];
 
 uint16_t _DirG, _DirD, CVitG, CVitD, DirD, DirG;
 uint16_t _CVitD = 0;
@@ -109,6 +142,7 @@ volatile uint32_t Dist_Obst;
 uint32_t Dist_Obst_;
 uint32_t Dist_Obst_cm;
 uint32_t Dist;
+uint32_t Dist_mur;
 uint8_t UNE_FOIS = 1;
 uint32_t OV = 0;
 /* USER CODE END PV */
@@ -124,6 +158,10 @@ void regulateur(void);
 void controle(void);
 void Calcul_Vit(void);
 void ACS(void);
+void Direction_Sonar(enum DIRECTION direction);
+void movPark(void);
+void Park(void);
+void printToXBEE(char out[]);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
@@ -147,7 +185,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  Dist_Obst = 0;
+	Dist_Obst = 0;
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -166,35 +204,39 @@ int main(void)
   MX_TIM4_Init();
   MX_USART3_UART_Init();
   MX_TIM1_Init();
+  MX_USART1_UART_Init();
 
   /* Initialize interrupts */
   MX_NVIC_Init();
   /* USER CODE BEGIN 2 */
-  	HAL_SuspendTick(); // suppresion des Tick interrupt pour le mode sleep.
+	HAL_SuspendTick(); // suppresion des Tick interrupt pour le mode sleep.
 
-  	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);  // Start PWM motor
-  	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-  	CMDE = STOP;
-  	New_CMDE = 1;
-  	HAL_TIM_Base_Start_IT(&htim2);  // Start IT sur font montant PWM
-  	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-  	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
-  	HAL_UART_Receive_IT(&huart3, &BLUE_RX, 1);
-  	HAL_ADC_Start_IT(&hadc1);
-
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);  // Start PWM motor
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);	//Start Servo
+	CMDE = STOP;
+	New_CMDE = 1;
+	HAL_TIM_Base_Start_IT(&htim2);  // Start IT sur font montant PWM
+	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
+	HAL_UART_Receive_IT(&huart3, &BLUE_RX, 1);
+	HAL_UART_Receive_IT(&huart1, XBEE_RX, 20);
+	HAL_ADC_Start_IT(&hadc1);
+	HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_2);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+	Direction_Sonar(POS_X);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-	  Gestion_Commandes();
-	  controle();
+	while (1) {
+		Gestion_Commandes();
+		controle();
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
 
-  }
+	}
   /* USER CODE END 3 */
 
 }
@@ -274,47 +316,43 @@ static void MX_NVIC_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void Gestion_Commandes(void) {
-	enum ETAT {
-		VEILLE,
-		ARRET,
-		AV1,
-		AV2,
-		AV3,
-		RV1,
-		RV2,
-		RV3,
-		DV1,
-		DV2,
-		DV3,
-		GV1,
-		GV2,
-		GV3
-	};
-	static enum ETAT Etat = VEILLE;
+void Direction_Sonar(enum DIRECTION direction) {
+	switch (direction) {
+	case POS_X:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2300);
+		break;
+	case POS_Y:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 795);
+		break;
+	case POS_Z:
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 4100);
+		break;
+	}
+}
 
-if (New_CMDE) {
+void Gestion_Commandes(void) {
+	if (New_CMDE) {
 		New_CMDE = 0;
-	switch (CMDE) {
+		switch (CMDE) {
 		case STOP: {
 			_CVitD = _CVitG = 0;
 			// Mise en sommeil: STOP mode , réveil via IT BP1
-			Etat = VEILLE;
+			gstCmdeEtat = VEILLE;
 			Mode = SLEEP;
 
 			break;
 		}
 		case START: {
 			// réveil sytème grace à l'IT BP1
-			Etat = ARRET;
+			gstCmdeEtat = ARRET;
 			Mode = SLEEP;
 
 			break;
 		}
 		case AVANT: {
-			switch (Etat) {
+			switch (gstCmdeEtat) {
 			case VEILLE: {
-				Etat = VEILLE;
+				gstCmdeEtat = VEILLE;
 				Mode = SLEEP;
 				break;
 			}
@@ -323,8 +361,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = AV1;
-				Mode = ACTIF;
+				gstCmdeEtat = AV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV1: {
@@ -332,26 +370,26 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = AV2;
-				Mode = ACTIF;
+				gstCmdeEtat = AV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV2: {
 				_DirG = AVANCE;
 				_DirD = AVANCE;
 				_CVitG = V3;
-				_CVitD = V3 ;
-				Etat = AV3;
-				Mode = ACTIF;
+				_CVitD = V3;
+				gstCmdeEtat = AV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV3: {
 				_DirG = AVANCE;
 				_DirD = AVANCE;
 				_CVitG = V3;
-				_CVitD = V3 ;
-				Etat = AV3;
-				Mode = ACTIF;
+				_CVitD = V3;
+				gstCmdeEtat = AV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV1: {
@@ -359,7 +397,7 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = 0;
 				_CVitD = 0;
-				Etat = ARRET;
+				gstCmdeEtat = ARRET;
 				Mode = SLEEP;
 
 				break;
@@ -369,8 +407,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = RV1;
-				Mode = ACTIF;
+				gstCmdeEtat = RV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV3: {
@@ -378,8 +416,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = RV2;
-				Mode = ACTIF;
+				gstCmdeEtat = RV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV1: {
@@ -387,8 +425,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = AV1;
-				Mode = ACTIF;
+				gstCmdeEtat = AV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV2: {
@@ -396,8 +434,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = AV2;
-				Mode = ACTIF;
+				gstCmdeEtat = AV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV3: {
@@ -405,8 +443,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = AV3;
-				Mode = ACTIF;
+				gstCmdeEtat = AV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV1: {
@@ -414,8 +452,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = AV2;
-				Mode = ACTIF;
+				gstCmdeEtat = AV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV2: {
@@ -423,8 +461,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = AV2;
-				Mode = ACTIF;
+				gstCmdeEtat = AV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV3: {
@@ -432,17 +470,19 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = AV3;
-				Mode = ACTIF;
+				gstCmdeEtat = AV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
+			default:
+				break;
 			}
 			break;
 		}
 		case ARRIERE: {
-			switch (Etat) {
+			switch (gstCmdeEtat) {
 			case VEILLE: {
-				Etat = VEILLE;
+				gstCmdeEtat = VEILLE;
 				Mode = SLEEP;
 				break;
 			}
@@ -451,8 +491,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = RV1;
-				Mode = ACTIF;
+				gstCmdeEtat = RV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV1: {
@@ -460,7 +500,7 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = 0;
 				_CVitD = 0;
-				Etat = ARRET;
+				gstCmdeEtat = ARRET;
 				Mode = SLEEP;
 
 				break;
@@ -470,8 +510,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = AV1;
-				Mode = ACTIF;
+				gstCmdeEtat = AV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV3: {
@@ -479,8 +519,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = AV2;
-				Mode = ACTIF;
+				gstCmdeEtat = AV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV1: {
@@ -488,8 +528,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = RV2;
-				Mode = ACTIF;
+				gstCmdeEtat = RV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV2: {
@@ -497,8 +537,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = RV3;
-				Mode = ACTIF;
+				gstCmdeEtat = RV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV3: {
@@ -506,8 +546,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = RV3;
-				Mode = ACTIF;
+				gstCmdeEtat = RV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV1: {
@@ -515,8 +555,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = RV1;
-				Mode = ACTIF;
+				gstCmdeEtat = RV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV2: {
@@ -524,8 +564,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = RV2;
-				Mode = ACTIF;
+				gstCmdeEtat = RV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV3: {
@@ -533,8 +573,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = RV3;
-				Mode = ACTIF;
+				gstCmdeEtat = RV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV1: {
@@ -542,8 +582,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = RV1;
-				Mode = ACTIF;
+				gstCmdeEtat = RV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV2: {
@@ -551,8 +591,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = RV2;
-				Mode = ACTIF;
+				gstCmdeEtat = RV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV3: {
@@ -560,17 +600,19 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = RV3;
-				Mode = ACTIF;
+				gstCmdeEtat = RV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
+			default:
+				break;
 			}
 			break;
 		}
 		case DROITE: {
-			switch (Etat) {
+			switch (gstCmdeEtat) {
 			case VEILLE: {
-				Etat = VEILLE;
+				gstCmdeEtat = VEILLE;
 				Mode = SLEEP;
 				break;
 			}
@@ -579,8 +621,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = DV1;
-				Mode = ACTIF;
+				gstCmdeEtat = DV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV1: {
@@ -588,8 +630,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = DV1;
-				Mode = ACTIF;
+				gstCmdeEtat = DV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV2: {
@@ -597,8 +639,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = DV2;
-				Mode = ACTIF;
+				gstCmdeEtat = DV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV3: {
@@ -606,8 +648,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = DV3;
-				Mode = ACTIF;
+				gstCmdeEtat = DV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV1: {
@@ -615,8 +657,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = DV1;
-				Mode = ACTIF;
+				gstCmdeEtat = DV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV2: {
@@ -624,8 +666,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = DV2;
-				Mode = ACTIF;
+				gstCmdeEtat = DV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV3: {
@@ -633,8 +675,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = DV3;
-				Mode = ACTIF;
+				gstCmdeEtat = DV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV1: {
@@ -642,8 +684,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = DV2;
-				Mode = ACTIF;
+				gstCmdeEtat = DV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV2: {
@@ -651,8 +693,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = DV3;
-				Mode = ACTIF;
+				gstCmdeEtat = DV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV3: {
@@ -660,8 +702,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = DV3;
-				Mode = ACTIF;
+				gstCmdeEtat = DV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV1: {
@@ -669,7 +711,7 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = 0;
 				_CVitD = 0;
-				Etat = ARRET;
+				gstCmdeEtat = ARRET;
 				Mode = SLEEP;
 
 				break;
@@ -679,8 +721,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = GV1;
-				Mode = ACTIF;
+				gstCmdeEtat = GV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV3: {
@@ -688,17 +730,19 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = GV2;
-				Mode = ACTIF;
+				gstCmdeEtat = GV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
+			default:
+				break;
 			}
 			break;
 		}
 		case GAUCHE: {
-			switch (Etat) {
+			switch (gstCmdeEtat) {
 			case VEILLE: {
-				Etat = VEILLE;
+				gstCmdeEtat = VEILLE;
 				Mode = SLEEP;
 				break;
 			}
@@ -707,8 +751,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = GV1;
-				Mode = ACTIF;
+				gstCmdeEtat = GV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV1: {
@@ -716,8 +760,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = GV1;
-				Mode = ACTIF;
+				gstCmdeEtat = GV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV2: {
@@ -725,8 +769,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = GV2;
-				Mode = ACTIF;
+				gstCmdeEtat = GV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case AV3: {
@@ -734,8 +778,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = GV3;
-				Mode = ACTIF;
+				gstCmdeEtat = GV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV1: {
@@ -743,8 +787,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = GV1;
-				Mode = ACTIF;
+				gstCmdeEtat = GV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV2: {
@@ -752,8 +796,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = GV2;
-				Mode = ACTIF;
+				gstCmdeEtat = GV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case RV3: {
@@ -761,8 +805,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = GV3;
-				Mode = ACTIF;
+				gstCmdeEtat = GV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV1: {
@@ -770,7 +814,7 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = 0;
 				_CVitD = 0;
-				Etat = ARRET;
+				gstCmdeEtat = ARRET;
 				Mode = SLEEP;
 
 				break;
@@ -780,8 +824,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V1;
 				_CVitD = V1;
-				Etat = DV1;
-				Mode = ACTIF;
+				gstCmdeEtat = DV1;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case DV3: {
@@ -789,8 +833,8 @@ if (New_CMDE) {
 				_DirD = RECULE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = DV2;
-				Mode = ACTIF;
+				gstCmdeEtat = DV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV1: {
@@ -798,8 +842,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V2;
 				_CVitD = V2;
-				Etat = GV2;
-				Mode = ACTIF;
+				gstCmdeEtat = GV2;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV2: {
@@ -807,8 +851,8 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = GV3;
-				Mode = ACTIF;
+				gstCmdeEtat = GV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
 			case GV3: {
@@ -816,17 +860,181 @@ if (New_CMDE) {
 				_DirD = AVANCE;
 				_CVitG = V3;
 				_CVitD = V3;
-				Etat = GV3;
-				Mode = ACTIF;
+				gstCmdeEtat = GV3;
+				Mode = ACTIF_MODE;
 				break;
 			}
+			default:
+				break;
 			}
 			break;
 
 		}
+		case PARK: {
+			if (gstCmdeEtat != VEILLE) {
+				gstCmdeEtat = PARK_STATE;
+				Mode = SLEEP;
+			}
+			break;
+		}
+		case MOV_PARK: {
+			if (gstCmdeEtat != VEILLE) {
+				gstCmdeEtat = MOV_PARK_STATE;
+			}
+			break;
+		}
+		case ATTENTE_PARK: {
+			if (gstCmdeEtat != VEILLE) {
+				gstCmdeEtat =
+						(gstCmdeEtat != ATTENTE_PARK_STATE) ?
+								ATTENTE_PARK_STATE : ARRET;
+				Mode = SLEEP;
+			}
+			break;
+		}
+		}
+	}
+
+	if (gstCmdeEtat == MOV_PARK_STATE) {
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+		movPark();
+	}
+
+	if (gstCmdeEtat == PARK_STATE) {
+		Park();
 	}
 }
+
+void movPark(void) {
+	static enum MOV_PARK_ETAT movParkEtat = AVANCER_50cm;
+	static unsigned int cpt = 0;
+	switch (movParkEtat) {
+	case AVANCER_50cm: {
+		if (cpt++ >= 40000) {
+			movParkEtat = TOURNER_CCW;
+			cpt = 0;
+		} else {
+			_CVitD = V1;
+			_CVitG = V1;
+			_DirD = AVANCE;
+			_DirG = AVANCE;
+			Mode = ACTIF_MODE;
+		}
+		break;
+	}
+	case TOURNER_CCW: {
+		if (cpt++ >= 40000) {
+			movParkEtat = MOV_Z;
+			cpt = 0;
+		} else {
+			_CVitD = V1;
+			_CVitG = V1;
+			_DirD = AVANCE;
+			_DirG = RECULE;
+			Mode = ACTIF_MODE;
+		}
+		break;
+	}
+	case MOV_Z: {
+		if (((long) Dist_mur - position_ref_i.z - DECALAGE) < -TOLERANCE
+				|| ((long) Dist_mur - position_ref_i.z - DECALAGE) > TOLERANCE) {
+			if ((long) Dist_mur < (position_ref_i.z + DECALAGE)) {
+				_CVitD = V1;
+				_CVitG = V1;
+				_DirD = RECULE;
+				_DirG = RECULE;
+				Mode = ACTIF_MODE;
+			} else if ((long) Dist_mur > (position_ref_i.z + DECALAGE)) {
+				_CVitD = V1;
+				_CVitG = V1;
+				_DirD = AVANCE;
+				_DirG = AVANCE;
+				Mode = ACTIF_MODE;
+			}
+		} else {
+			movParkEtat = TOURNER_CW;
+		}
+		break;
+	}
+	case TOURNER_CW: {
+		if (cpt++ == 40000) {
+			movParkEtat = ALIGNER;
+			cpt = 0;
+		} else {
+			_CVitD = V1;
+			_CVitG = V1;
+			_DirD = RECULE;
+			_DirG = AVANCE;
+			Mode = ACTIF_MODE;
+		}
+		break;
+	}
+	case ALIGNER: {
+		if ((long) Dist_mur > position_ref_i.x) {
+			_CVitD = V1;
+			_CVitG = V1;
+			_DirD = AVANCE;
+			_DirG = AVANCE;
+			Mode = ACTIF_MODE;
+		} else {
+			_CVitD = 0;
+			_CVitG = 0;
+			Mode = SLEEP;
+			movParkEtat = AVANCER_50cm;
+			gstCmdeEtat = PARK_STATE;
+			cpt = 0;
+		}
+		break;
+	}
+	}
 }
+
+void Park(void) {
+	static int cpt = 0;
+	static int offset = 0;
+	static char buffer[20];
+	char tempBuffer[1];
+	if (cpt == 0) {
+		address_i = 0;
+		offset = 0;
+		printToXBEE(":@");  // First time : Ask for addresses.
+	}
+	cpt++;
+	if (address_i) {
+		if (offset == 0) {
+			offset = cpt;
+			cpt = 1;
+		}
+		if (cpt < 200000) {
+			Direction_Sonar(POS_X);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+			position_ref_o.x = Dist_mur;
+		} else if (cpt >= 200000 && cpt < 400000) {
+			Direction_Sonar(POS_Y);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+			position_ref_o.y = Dist_mur;
+		} else if (cpt >= 400000 && cpt < 600000) {
+			Direction_Sonar(POS_Z);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
+			position_ref_o.z = Dist_mur;
+		} else {
+			sprintf(buffer, "%%x%05iy%05iz%05i", position_ref_o.x,
+					position_ref_o.y, position_ref_o.z);
+			printToXBEE(buffer);
+
+			sprintf(tempBuffer, "#%i", address_i);
+
+			printToXBEE(tempBuffer);
+			printToXBEE(":M");
+			cpt = 0;
+			gstCmdeEtat = ARRET;
+		}
+	} else if (cpt > 2000000) {
+		gstCmdeEtat = ARRET;
+		cpt = 0;
+	}
+}
+
 void controle(void) {
 
 	if (Tech >= T_200_MS) {
@@ -850,7 +1058,7 @@ void ACS(void) {
 
 	switch (Etat) {
 	case ARRET: {
-		if (Mode == ACTIF )
+		if (Mode == ACTIF_MODE)
 			Etat = ACTIF;
 		else {
 			CVitD = _CVitD;
@@ -968,7 +1176,7 @@ void regulateur(void) {
 
 	switch (Etat) {
 	case ARRET: {
-		if (Mode == ACTIF)
+		if (Mode == ACTIF_MODE)
 			Etat = ACTIF;
 		else {
 			__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
@@ -981,7 +1189,7 @@ void regulateur(void) {
 			HAL_GPIO_WritePin(IR2_out_GPIO_Port, IR2_out_Pin, GPIO_PIN_RESET);
 
 			HAL_PWR_EnterSLEEPMode(PWR_LOWPOWERREGULATOR_ON,
-					PWR_SLEEPENTRY_WFI);
+			PWR_SLEEPENTRY_WFI);
 
 			__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
 			__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
@@ -1037,43 +1245,99 @@ void regulateur(void) {
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	static char bufferAddressToSend[3];
+
 	if (huart->Instance == USART3) {
 
 		switch (BLUE_RX) {
 		case 'F': {
 			CMDE = AVANT;
-			//New_CMDE = 1;
+			New_CMDE = 1;
 			break;
 		}
 
 		case 'B': {
 			CMDE = ARRIERE;
-			//New_CMDE = 1;
+			New_CMDE = 1;
 			break;
 		}
 
 		case 'L': {
 			CMDE = GAUCHE;
-			//New_CMDE = 1;
+			New_CMDE = 1;
 			break;
 		}
 
 		case 'R': {
 			CMDE = DROITE;
-			//New_CMDE = 1;
+			New_CMDE = 1;
 			break;
 		}
 
-		case 'D':{
+		case 'W': {
+			CMDE = PARK;
+			New_CMDE = 1;
+			break;
+		}
+
+		case 'U': {
+			CMDE = ATTENTE_PARK;
+			New_CMDE = 1;
+			break;
+		}
+		case 'u': {
+			CMDE = ATTENTE_PARK;
+			New_CMDE = 1;
+			break;
+		}
+
+		case 'D': {
 			// disconnect bluetooth
 			break;
 		}
 		default:
-			New_CMDE = 1;
+			break;
 		}
 
-		HAL_UART_Receive_IT(&huart3, &BLUE_RX, 1);
+		HAL_UART_Receive_IT(&huart3, &BLUE_RX, 1);//arme la réception du caractère suivant
 
+	} else if (huart->Instance == USART1) {
+		switch (XBEE_RX[0]) {
+		case '#':   // #[char]
+			address_i = XBEE_RX[1];
+			break;
+
+		case ':':  // :[command], do not forgot to get address
+			switch (XBEE_RX[1]) {
+			case '@':
+				if (gstCmdeEtat == ATTENTE_PARK_STATE) {
+					sprintf(bufferAddressToSend, "#%s", MON_ADRESSE);
+					printToXBEE(bufferAddressToSend);
+				}
+				break;
+
+			case 'M':
+				if (address_i == MON_ADRESSE[0]) {
+					CMDE = MOV_PARK;
+					New_CMDE = 1;
+				}
+				break;
+
+			default:
+				break;
+			}
+			break;  // case ':'
+
+		case '%':   // %x12345y12345z12345
+			sscanf((char *) XBEE_RX, "%%x%05iy%05iz%05i", &position_ref_i.x,
+					&position_ref_i.y, &position_ref_i.z);
+			break;
+
+		default:
+			break;
+		}
+
+		HAL_UART_Receive_IT(&huart1, XBEE_RX, 20); //arme la réception du caractère suivant
 	}
 }
 
@@ -1089,7 +1353,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef * htim) {
 	static unsigned char cpt = 0;
 
-	if ( htim->Instance == TIM2) {
+	if (htim->Instance == TIM2) {
 		cpt++;
 		Time++;
 		Tech++;
@@ -1136,8 +1400,21 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 }
 
-void HAL_ADC_LevelOutOfWindowCallback(ADC_HandleTypeDef* hadc1){
+void HAL_ADC_LevelOutOfWindowCallback(ADC_HandleTypeDef* hadc1) {
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+}
+
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim) {
+	if (htim->Instance == TIM1) {
+		if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
+		if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)
+			Dist_mur = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+	}
+}
+
+void printToXBEE(char out[]) {
+	HAL_UART_Transmit(&huart1, (uint8_t *) out, strlen(out), 10);
 }
 
 /* USER CODE END 4 */
@@ -1151,10 +1428,9 @@ void HAL_ADC_LevelOutOfWindowCallback(ADC_HandleTypeDef* hadc1){
 void _Error_Handler(char *file, int line)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  while(1)
-  {
-  }
+	/* User can add his own implementation to report the HAL error return state */
+	while (1) {
+	}
   /* USER CODE END Error_Handler_Debug */
 }
 
@@ -1169,8 +1445,8 @@ void _Error_Handler(char *file, int line)
 void assert_failed(uint8_t* file, uint32_t line)
 { 
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+	/* User can add his own implementation to report the file name and line number,
+	 tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
