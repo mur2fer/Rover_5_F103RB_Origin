@@ -1301,43 +1301,43 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		HAL_UART_Receive_IT(&huart3, &BLUE_RX, 1);//arme la réception du caractère suivant
 
 	} else if (huart->Instance == USART1) {
-		switch (XBEE_RX[0]) {
-		case '#':   // #[char]
-			address_i = XBEE_RX[1];
-			break;
-
-		case ':':  // :[command], do not forgot to get address
-			switch (XBEE_RX[1]) {
-			case '@':
-				if (gstCmdeEtat == ATTENTE_PARK_STATE) {
-					snprintf(XBEE_TX, 3, "#%s", MON_ADRESSE);
-					printToXBEE(XBEE_TX);
-				}
-				break;
-
-			case 'M':
-				if (address_i == MON_ADRESSE[0]) {
-					CMDE = MOV_PARK;
-					New_CMDE = 1;
-				}
-				break;
-
-			default:  //[TODO] faire comme avant avec 1 caractère
-				break;
-			}
-			break;  // case ':'
-
-		case '%':   // %x12345y12345z12345
-			sscanf((char *) XBEE_RX, "%%x%05iy%05iz%05i", &position_ref_i.x,
-					&position_ref_i.y, &position_ref_i.z);
-			break;
-
-		default:
-			break;
-		}
-
-		memset(XBEE_RX, 0, sizeof(XBEE_RX));
-		while (HAL_UART_Receive_IT(&huart1, (uint8_t *) XBEE_RX, 1) == HAL_BUSY);
+//		switch (XBEE_RX[0]) {
+//		case '#':   // #[char]
+//			address_i = XBEE_RX[1];
+//			break;
+//
+//		case ':':  // :[command], do not forgot to get address
+//			switch (XBEE_RX[1]) {
+//			case '@':
+//				if (gstCmdeEtat == ATTENTE_PARK_STATE) {
+//					snprintf(XBEE_TX, 3, "#%s", MON_ADRESSE);
+//					printToXBEE(XBEE_TX);
+//				}
+//				break;
+//
+//			case 'M':
+//				if (address_i == MON_ADRESSE[0]) {
+//					CMDE = MOV_PARK;
+//					New_CMDE = 1;
+//				}
+//				break;
+//
+//			default:  //[TODO] faire comme avant avec 1 caractère
+//				break;
+//			}
+//			break;  // case ':'
+//
+//		case '%':   // %x12345y12345z12345
+//			sscanf((char *) XBEE_RX, "%%x%05iy%05iz%05i", &position_ref_i.x,
+//					&position_ref_i.y, &position_ref_i.z);
+//			break;
+//
+//		default:
+//			break;
+//		}
+//
+//		memset(XBEE_RX, 0, sizeof(XBEE_RX));
+		HAL_UART_Receive_IT(&huart1, (uint8_t *) XBEE_RX, 1);
 	}
 }
 
