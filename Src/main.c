@@ -57,10 +57,10 @@
 #define AVANCE 	GPIO_PIN_SET
 #define RECULE  GPIO_PIN_RESET
 #define POURCENT 640
-#define Seuil_Dist_4 1000 // corespond à 10 cm.
-#define Seuil_Dist_3 1000
-#define Seuil_Dist_1 1000
-#define Seuil_Dist_2 1000
+#define Seuil_Dist_4 1600 // 1600 corespond à 10 cm.
+#define Seuil_Dist_3 1600
+#define Seuil_Dist_1 1600
+#define Seuil_Dist_2 1600
 #define V1 38
 #define V2 56
 #define V3 76
@@ -318,7 +318,7 @@ static void MX_NVIC_Init(void) {
 void Direction_Sonar(enum DIRECTION direction) {
 	switch (direction) {
 	case POS_X:
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2300);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2600);
 		break;
 	case POS_Y:
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 795);
@@ -909,7 +909,7 @@ void movPark(void) {
 	static unsigned int cpt = 0;
 	switch (movParkEtat) {
 	case AVANCER_50cm: {
-		if (cpt++ >= 40000) {
+		if (cpt++ >= 1250000) {
 			movParkEtat = TOURNER_CCW;
 			cpt = 0;
 		} else {
@@ -922,7 +922,7 @@ void movPark(void) {
 		break;
 	}
 	case TOURNER_CCW: {
-		if (cpt++ >= 40000) {
+		if (cpt++ >= 800000) {
 			movParkEtat = MOV_Z;
 			cpt = 0;
 		} else {
@@ -931,10 +931,12 @@ void movPark(void) {
 			_DirD = AVANCE;
 			_DirG = RECULE;
 			Mode = ACTIF_MODE;
+
 		}
 		break;
 	}
 	case MOV_Z: {
+		position_ref_i.z = 5000; // TODO delete
 		if (((long) Dist_mur - position_ref_i.z - DECALAGE) < -TOLERANCE
 				|| ((long) Dist_mur - position_ref_i.z - DECALAGE) > TOLERANCE) {
 			if ((long) Dist_mur < (position_ref_i.z + DECALAGE)) {
@@ -956,7 +958,7 @@ void movPark(void) {
 		break;
 	}
 	case TOURNER_CW: {
-		if (cpt++ == 40000) {
+		if (cpt++ == 720000) {
 			movParkEtat = ALIGNER;
 			cpt = 0;
 		} else {
@@ -969,6 +971,7 @@ void movPark(void) {
 		break;
 	}
 	case ALIGNER: {
+		position_ref_i.x = 5000; // TODO delete
 		if ((long) Dist_mur > position_ref_i.x) {
 			_CVitD = V1;
 			_CVitG = V1;
@@ -1303,6 +1306,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 
 	} else if (huart->Instance == USART1) {
 		MESSAGE_XBEE[cursor_xbee] = XBEE_RX;
+
+		if (MESSAGE_XBEE[0] == 'V') {
+			CMDE = MOV_PARK;
+			New_CMDE = 1;
+		}
 
 		if (MESSAGE_XBEE[0] != '#' && MESSAGE_XBEE[0] != ':'
 				&& MESSAGE_XBEE[0] != '%')  // Filtre
