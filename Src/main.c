@@ -75,9 +75,9 @@
 #define CKd_D 0
 #define CKd_G 0
 #define DELTA 0x50
-#define DECALAGE 30
-#define TOLERANCE 3
-const char MON_ADRESSE[] = { 77 };
+#define DECALAGE 5000
+#define TOLERANCE 300
+const char MON_ADRESSE = 77;
 
 struct Position {
 	int x, y, z;
@@ -316,6 +316,18 @@ static void MX_NVIC_Init(void) {
 
 /* USER CODE BEGIN 4 */
 void Direction_Sonar(enum DIRECTION direction) {
+	// D0
+//	switch (direction) {
+//	case POS_X:
+//		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2200);
+//		break;
+//	case POS_Y:
+//		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 795);
+//		break;
+//	case POS_Z:
+//		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 4100);
+//		break;
+//	}
 	switch (direction) {
 	case POS_X:
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2600);
@@ -924,6 +936,11 @@ void movPark(void) {
 	case TOURNER_CCW: {
 		if (cpt++ >= 800000) {
 			movParkEtat = MOV_Z;
+			_CVitD = 0;
+			_CVitG = 0;
+			_DirD = AVANCE;
+			_DirG = AVANCE;
+			Mode = SLEEP;
 			cpt = 0;
 		} else {
 			_CVitD = V1;
@@ -936,30 +953,39 @@ void movPark(void) {
 		break;
 	}
 	case MOV_Z: {
-		position_ref_i.z = 5000; // TODO delete
-		if (((long) Dist_mur - position_ref_i.z - DECALAGE) < -TOLERANCE
-				|| ((long) Dist_mur - position_ref_i.z - DECALAGE) > TOLERANCE) {
-			if ((long) Dist_mur < (position_ref_i.z + DECALAGE)) {
-				_CVitD = V1;
-				_CVitG = V1;
-				_DirD = RECULE;
-				_DirG = RECULE;
-				Mode = ACTIF_MODE;
-			} else if ((long) Dist_mur > (position_ref_i.z + DECALAGE)) {
-				_CVitD = V1;
-				_CVitG = V1;
-				_DirD = AVANCE;
-				_DirG = AVANCE;
-				Mode = ACTIF_MODE;
+		if (cpt++ >= 200000) {
+			if (((long) Dist_mur - position_ref_i.z - DECALAGE) < -TOLERANCE
+					|| ((long) Dist_mur - position_ref_i.z - DECALAGE)
+							> TOLERANCE) {
+				if ((long) Dist_mur < (position_ref_i.z + DECALAGE)) {
+					_CVitD = V1;
+					_CVitG = V1;
+					_DirD = RECULE;
+					_DirG = RECULE;
+					Mode = ACTIF_MODE;
+				} else if ((long) Dist_mur > (position_ref_i.z + DECALAGE)) {
+					_CVitD = V1;
+					_CVitG = V1;
+					_DirD = AVANCE;
+					_DirG = AVANCE;
+					Mode = ACTIF_MODE;
+				}
+			} else {
+				movParkEtat = TOURNER_CW;
+				cpt = 0;
 			}
-		} else {
-			movParkEtat = TOURNER_CW;
 		}
+
 		break;
 	}
 	case TOURNER_CW: {
-		if (cpt++ == 720000) {
+		if (cpt++ >= 720000) {
 			movParkEtat = ALIGNER;
+			_CVitD = 0;
+			_CVitG = 0;
+			_DirD = AVANCE;
+			_DirG = AVANCE;
+			Mode = SLEEP;
 			cpt = 0;
 		} else {
 			_CVitD = V1;
@@ -971,20 +997,22 @@ void movPark(void) {
 		break;
 	}
 	case ALIGNER: {
-		position_ref_i.x = 5000; // TODO delete
-		if ((long) Dist_mur > position_ref_i.x) {
-			_CVitD = V1;
-			_CVitG = V1;
-			_DirD = AVANCE;
-			_DirG = AVANCE;
-			Mode = ACTIF_MODE;
-		} else {
-			_CVitD = 0;
-			_CVitG = 0;
-			Mode = SLEEP;
-			movParkEtat = AVANCER_50cm;
-			gstCmdeEtat = PARK_STATE;
-			cpt = 0;
+		if (cpt++ >= 200000) {
+			if ((long) Dist_mur > position_ref_i.x) {
+				_CVitD = V1;
+				_CVitG = V1;
+				_DirD = AVANCE;
+				_DirG = AVANCE;
+				Mode = ACTIF_MODE;
+			} else {
+				_CVitD = 0;
+				_CVitG = 0;
+				Mode = SLEEP;
+				movParkEtat = AVANCER_50cm;
+				gstCmdeEtat = PARK_STATE;
+				cpt = 0;
+			}
+
 		}
 		break;
 	}
@@ -998,7 +1026,7 @@ void Park(void) {
 		address_i = 0;
 		offset = 0;
 		memset(XBEE_TX, 0, strlen(XBEE_TX));  // Clear buffer
-		strncpy(XBEE_TX, ":@", 2);
+		strncpy(XBEE_TX, ":@", 20);
 		printToXBEE(XBEE_TX);  // First time : Ask for addresses.
 	}
 	cpt++;
@@ -1024,7 +1052,8 @@ void Park(void) {
 					position_ref_o.y, position_ref_o.z);
 			printToXBEE(XBEE_TX);
 
-			snprintf(XBEE_TX, 3, "#%i", address_i);
+			memset(XBEE_TX, 0, strlen(XBEE_TX));  // Clear buffer
+			snprintf(XBEE_TX, 3, "#%c", address_i);
 			printToXBEE(XBEE_TX);
 
 			memset(XBEE_TX, 0, strlen(XBEE_TX));  // Clear buffer
@@ -1036,6 +1065,7 @@ void Park(void) {
 	} else if (cpt > 2000000) {
 		gstCmdeEtat = ARRET;
 		cpt = 0;
+		offset = 0;
 	}
 }
 
@@ -1307,11 +1337,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	} else if (huart->Instance == USART1) {
 		MESSAGE_XBEE[cursor_xbee] = XBEE_RX;
 
-		if (MESSAGE_XBEE[0] == 'V') {
-			CMDE = MOV_PARK;
-			New_CMDE = 1;
-		}
-
 		if (MESSAGE_XBEE[0] != '#' && MESSAGE_XBEE[0] != ':'
 				&& MESSAGE_XBEE[0] != '%')  // Filtre
 			cursor_xbee = 0;
@@ -1329,19 +1354,20 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 				switch (MESSAGE_XBEE[1]) {
 				case '@':
 					if (gstCmdeEtat == ATTENTE_PARK_STATE) {
-						snprintf(XBEE_TX, 3, "#%s", MON_ADRESSE);
+						memset(XBEE_TX, 0, strlen(XBEE_TX));  // Clear buffer
+						snprintf(XBEE_TX, 3, "#%c", MON_ADRESSE);
 						printToXBEE(XBEE_TX);
 					}
 					break;
 
 				case 'M':
-					if (address_i == MON_ADRESSE[0]) {
+					if (address_i == MON_ADRESSE) {
 						CMDE = MOV_PARK;
 						New_CMDE = 1;
 					}
 					break;
 
-				default:  //[TODO] faire comme avant avec 1 caractère
+				default:
 					break;
 				}
 				break;  // case ':'
@@ -1436,7 +1462,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim) {
 }
 
 void printToXBEE(char out[]) {
-	HAL_UART_Transmit(&huart1, (uint8_t *) out, strlen(out), 10);
+	HAL_UART_Transmit(&huart1, (uint8_t *) out, 20, 10);
 }
 
 /* USER CODE END 4 */
