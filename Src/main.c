@@ -75,12 +75,12 @@
 #define CKd_D 0
 #define CKd_G 0
 #define DELTA 0x50
-#define DECALAGE 5000
+#define DECALAGE 10000
 #define TOLERANCE 300
-const char MON_ADRESSE = 77;
+const char address_o = 77;
 
 struct Position {
-	int x, y, z;
+	long x, y, z;
 };
 volatile struct Position position_ref_o = { .x = -1, .y = -1, .z = -1 };
 volatile struct Position position_ref_i = { .x = -1, .y = -1, .z = -1 };
@@ -144,7 +144,7 @@ volatile uint32_t Dist_Obst;
 uint32_t Dist_Obst_;
 uint32_t Dist_Obst_cm;
 uint32_t Dist;
-uint32_t Dist_mur;
+long Dist_mur;
 uint8_t UNE_FOIS = 1;
 uint32_t OV = 0;
 /* USER CODE END PV */
@@ -330,7 +330,7 @@ void Direction_Sonar(enum DIRECTION direction) {
 //	}
 	switch (direction) {
 	case POS_X:
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2600);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 2350);
 		break;
 	case POS_Y:
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 795);
@@ -906,14 +906,13 @@ void Gestion_Commandes(void) {
 		}
 	}
 
-	if (gstCmdeEtat == MOV_PARK_STATE) {
+	if (gstCmdeEtat == PARK_STATE) {
+		Park();
+	} else if (gstCmdeEtat == MOV_PARK_STATE) {
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
 		movPark();
 	}
 
-	if (gstCmdeEtat == PARK_STATE) {
-		Park();
-	}
 }
 
 void movPark(void) {
@@ -924,6 +923,8 @@ void movPark(void) {
 		if (cpt++ >= 1250000) {
 			movParkEtat = TOURNER_CCW;
 			cpt = 0;
+			sprintf(XBEE_TX, "%s\n", "TOURNER_CCW");
+			printToXBEE(XBEE_TX);
 		} else {
 			_CVitD = V1;
 			_CVitG = V1;
@@ -942,6 +943,8 @@ void movPark(void) {
 			_DirG = AVANCE;
 			Mode = SLEEP;
 			cpt = 0;
+			sprintf(XBEE_TX, "%s\n", "MOV_Z");
+			printToXBEE(XBEE_TX);
 		} else {
 			_CVitD = V1;
 			_CVitG = V1;
@@ -954,25 +957,23 @@ void movPark(void) {
 	}
 	case MOV_Z: {
 		if (cpt++ >= 200000) {
-			if (((long) Dist_mur - position_ref_i.z - DECALAGE) < -TOLERANCE
-					|| ((long) Dist_mur - position_ref_i.z - DECALAGE)
-							> TOLERANCE) {
-				if ((long) Dist_mur < (position_ref_i.z + DECALAGE)) {
-					_CVitD = V1;
-					_CVitG = V1;
-					_DirD = RECULE;
-					_DirG = RECULE;
-					Mode = ACTIF_MODE;
-				} else if ((long) Dist_mur > (position_ref_i.z + DECALAGE)) {
-					_CVitD = V1;
-					_CVitG = V1;
-					_DirD = AVANCE;
-					_DirG = AVANCE;
-					Mode = ACTIF_MODE;
-				}
+			if ((Dist_mur - position_ref_i.z - DECALAGE) < -TOLERANCE) {
+				_CVitD = V1;
+				_CVitG = V1;
+				_DirD = RECULE;
+				_DirG = RECULE;
+				Mode = ACTIF_MODE;
+			} else if ((Dist_mur - position_ref_i.z - DECALAGE) > TOLERANCE) {
+				_CVitD = V1;
+				_CVitG = V1;
+				_DirD = AVANCE;
+				_DirG = AVANCE;
+				Mode = ACTIF_MODE;
 			} else {
 				movParkEtat = TOURNER_CW;
 				cpt = 0;
+				sprintf(XBEE_TX, "%s\n", "TOURNER_CW");
+				printToXBEE(XBEE_TX);
 			}
 		}
 
@@ -987,6 +988,8 @@ void movPark(void) {
 			_DirG = AVANCE;
 			Mode = SLEEP;
 			cpt = 0;
+			sprintf(XBEE_TX, "%s\n", "ALIGNER");
+			printToXBEE(XBEE_TX);
 		} else {
 			_CVitD = V1;
 			_CVitG = V1;
@@ -997,22 +1000,21 @@ void movPark(void) {
 		break;
 	}
 	case ALIGNER: {
-		if (cpt++ >= 200000) {
-			if ((long) Dist_mur > position_ref_i.x) {
-				_CVitD = V1;
-				_CVitG = V1;
-				_DirD = AVANCE;
-				_DirG = AVANCE;
-				Mode = ACTIF_MODE;
-			} else {
-				_CVitD = 0;
-				_CVitG = 0;
-				Mode = SLEEP;
-				movParkEtat = AVANCER_50cm;
-				gstCmdeEtat = PARK_STATE;
-				cpt = 0;
-			}
-
+		if (Dist_mur > position_ref_i.x) {
+			_CVitD = V1;
+			_CVitG = V1;
+			_DirD = AVANCE;
+			_DirG = AVANCE;
+			Mode = ACTIF_MODE;
+		} else {
+			sprintf(XBEE_TX, "%s\n", "EXIT!!!!!");
+			printToXBEE(XBEE_TX);
+			_CVitD = 0;
+			_CVitG = 0;
+			Mode = SLEEP;
+			movParkEtat = AVANCER_50cm;
+			gstCmdeEtat = PARK_STATE;
+			cpt = 0;
 		}
 		break;
 	}
@@ -1048,8 +1050,12 @@ void Park(void) {
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
 			position_ref_o.z = Dist_mur;
 		} else {
-			snprintf(XBEE_TX, 20, "%%x%05iy%05iz%05i", position_ref_o.x,
-					position_ref_o.y, position_ref_o.z);
+			memset(XBEE_TX, 0, strlen(XBEE_TX));  // Clear buffer
+			sprintf(XBEE_TX, "Px%05li", position_ref_o.x);
+			printToXBEE(XBEE_TX);
+			sprintf(XBEE_TX, "Py%05li", position_ref_o.y);
+			printToXBEE(XBEE_TX);
+			sprintf(XBEE_TX, "Pz%05li", position_ref_o.z);
 			printToXBEE(XBEE_TX);
 
 			memset(XBEE_TX, 0, strlen(XBEE_TX));  // Clear buffer
@@ -1278,6 +1284,7 @@ void regulateur(void) {
 	}
 }
 
+//réception commandes
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	static int cursor_xbee = 0;
 	if (huart->Instance == USART3) {
@@ -1338,12 +1345,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		MESSAGE_XBEE[cursor_xbee] = XBEE_RX;
 
 		if (MESSAGE_XBEE[0] != '#' && MESSAGE_XBEE[0] != ':'
-				&& MESSAGE_XBEE[0] != '%')  // Filtre
+				&& MESSAGE_XBEE[0] != 'P')  // Filtre
 			cursor_xbee = 0;
 		else
 			cursor_xbee++;
 
-		if (cursor_xbee == 20) {
+		if (cursor_xbee >= 20) {
 			cursor_xbee = 0;
 			switch (MESSAGE_XBEE[0]) {
 			case '#':   // #[char]
@@ -1355,13 +1362,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 				case '@':
 					if (gstCmdeEtat == ATTENTE_PARK_STATE) {
 						memset(XBEE_TX, 0, strlen(XBEE_TX));  // Clear buffer
-						snprintf(XBEE_TX, 3, "#%c", MON_ADRESSE);
+						snprintf(XBEE_TX, 3, "#%c", address_o);
 						printToXBEE(XBEE_TX);
 					}
 					break;
 
 				case 'M':
-					if (address_i == MON_ADRESSE) {
+					if (address_i == address_o) {
 						CMDE = MOV_PARK;
 						New_CMDE = 1;
 					}
@@ -1372,10 +1379,15 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 				}
 				break;  // case ':'
 
-			case '%':   // %x12345y12345z12345
-				sscanf((char *) MESSAGE_XBEE, "%%x%05iy%05iz%05i",
-						&position_ref_i.x, &position_ref_i.y,
-						&position_ref_i.z);
+			case 'P':
+				if (MESSAGE_XBEE[1] == 'x') {
+					sscanf((char *) MESSAGE_XBEE, "Px%li", &position_ref_i.x);
+				} else if (MESSAGE_XBEE[1] == 'y') {
+					sscanf((char *) MESSAGE_XBEE, "Py%li", &position_ref_i.y);
+				} else if (MESSAGE_XBEE[1] == 'z') {
+					sscanf((char *) MESSAGE_XBEE, "Pz%li", &position_ref_i.z);
+				}
+//				sscanf((char *) MESSAGE_XBEE, "%*c%*c%05li%*c%05li%*c%05li", &position_ref_i.x, &position_ref_i.y, &position_ref_i.z);
 				break;
 
 			default:
@@ -1383,7 +1395,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			}
 
 			memset(MESSAGE_XBEE, 0, sizeof(MESSAGE_XBEE));
-
 		}
 		HAL_UART_Receive_IT(&huart1, &XBEE_RX, 1);
 	}
@@ -1398,6 +1409,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 	HAL_ADC_Stop_DMA(hadc);
 }
 
+//mesure infrarouge
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef * htim) {
 	static unsigned char cpt = 0;
 
@@ -1435,6 +1447,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef * htim) {
 	}
 }
 
+//bouton start/stop
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 	static unsigned char TOGGLE = 0;
@@ -1448,10 +1461,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 }
 
+//alumage LED surveillance batterie
 void HAL_ADC_LevelOutOfWindowCallback(ADC_HandleTypeDef* hadc1) {
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
 }
 
+//mesure sonar
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim) {
 	if (htim->Instance == TIM1) {
 		if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
